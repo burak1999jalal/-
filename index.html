@@ -1,0 +1,338 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tetris Deluxe - Burraq Edition</title>
+    <style>
+        :root {
+            --primary: #00f2fe;
+            --bg: #0b0e14;
+            --glass: rgba(255, 255, 255, 0.05);
+        }
+
+        * { box-sizing: border-box; touch-action: none; -webkit-user-select: none; }
+
+        body {
+            background: var(--bg);
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            display: flex; flex-direction: column; align-items: center;
+            height: 100vh; overflow: hidden;
+        }
+
+        .screen-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; backdrop-filter: blur(10px);
+        }
+
+        #game-container { 
+            display: flex; 
+            gap: 15px; 
+            align-items: flex-start; 
+            margin-top: 15px; /* تقليل الهامش العلوي */
+        }
+
+        canvas { 
+            background: #000; border-radius: 12px; border: 2px solid #333;
+            max-height: 50vh; aspect-ratio: 12 / 20; /* تقليل الارتفاع الأقصى للكنفاس لإعطاء مساحة للأزرار */
+        }
+
+        .side-panel { display: flex; flex-direction: column; gap: 10px; width: 100px; }
+
+        .info-card { 
+            background: var(--glass); padding: 8px; border-radius: 12px; 
+            text-align: center; border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        #next-canvas { background: #000; border-radius: 8px; width: 50px; height: 50px; margin: 5px auto; display: block; }
+
+        .btn {
+            background: var(--primary); color: #000; border: none;
+            padding: 8px; border-radius: 8px; font-weight: bold; cursor: pointer;
+            transition: transform 0.1s; font-size: 13px;
+        }
+
+        .credits {
+            font-size: 9px; color: #666; text-align: center; margin-top: 2px;
+            line-height: 1.2; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 5px;
+        }
+
+        /* تعديل مكان الأزرار لترتفع للأعلى */
+        #mobile-controls {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+            width: 90%; max-width: 380px; 
+            margin-top: 15px; /* رفع الأزرار عن طريق تقليل المسافة العلوية */
+            margin-bottom: 40px; /* زيادة الهامش السفلي لرفع الأزرار عن حافة الشاشة */
+        }
+
+        .ctrl-btn {
+            background: var(--glass); color: white; height: 60px; /* زيادة الارتفاع قليلاً لسهولة اللمس */
+            border-radius: 15px; font-size: 22px; display: flex;
+            align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.1);
+        }
+        .ctrl-btn:active { background: rgba(0, 242, 254, 0.2); border-color: var(--primary); }
+
+        .rotate { grid-column: span 3; color: var(--primary); border-color: var(--primary); height: 50px; }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen" class="screen-overlay">
+        <h1 id="main-title" style="color: var(--primary)">تيتريس الفخامة</h1>
+        <p>ببرمجة المبرمج براق</p>
+        <button class="btn" style="font-size: 20px; padding: 15px 50px;" onclick="initAudio(); startGame();">ابدأ اللعب</button>
+    </div>
+
+    <div id="pause-screen" class="screen-overlay" style="display: none;">
+        <h1 style="color: var(--primary)">موقف مؤقتاً</h1>
+        <button class="btn" style="font-size: 20px; padding: 15px 50px;" onclick="togglePause()">استمرار</button>
+    </div>
+
+    <div id="game-container">
+        <canvas id="tetris"></canvas>
+        <div class="side-panel">
+            <div class="info-card">
+                <div style="font-size: 10px; color: #888;">القادم</div>
+                <canvas id="next-canvas"></canvas>
+            </div>
+            <div class="info-card">
+                <div style="font-size: 10px; color: #888;">السكور</div>
+                <div id="score" style="font-size: 18px; font-weight: bold; color: var(--primary);">0</div>
+            </div>
+            <button class="btn" style="background: #ff4757; color: white;" onclick="togglePause()">توقف</button>
+            <button class="btn" onclick="resetGame()">إعادة</button>
+            <div class="credits">تمت برمجة اللعبة بواسطة<br><b style="color: var(--primary);">المبرمج براق</b></div>
+        </div>
+    </div>
+
+    <div id="mobile-controls">
+        <div class="ctrl-btn rotate" id="btn-up">تدوير - ROTATE</div>
+        <div class="ctrl-btn" id="btn-left">◀</div> 
+        <div class="ctrl-btn" id="btn-down">▼</div>
+        <div class="ctrl-btn" id="btn-right">▶</div>
+    </div>
+
+    <script>
+        // --- الكود البرمجي (نفس المحرك القوي السابق) ---
+        let audioCtx;
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+
+        function playSound(freq, type, duration, vol) {
+            if (!audioCtx || audioCtx.state === 'suspended') return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+
+        const sounds = {
+            move: () => playSound(150, 'triangle', 0.1, 0.2),
+            rotate: () => playSound(300, 'sine', 0.1, 0.2),
+            clear: () => { playSound(440, 'square', 0.3, 0.1); setTimeout(() => playSound(880, 'square', 0.4, 0.1), 100); },
+            gameOver: () => playSound(100, 'sawtooth', 1, 0.2)
+        };
+
+        const canvas = document.getElementById('tetris');
+        const context = canvas.getContext('2d');
+        const nextCanvas = document.getElementById('next-canvas');
+        const nextCtx = nextCanvas.getContext('2d');
+        const BLOCK = 25;
+        canvas.width = 12 * BLOCK; canvas.height = 20 * BLOCK;
+        nextCanvas.width = 50; nextCanvas.height = 50;
+
+        let gameRunning = false;
+        let isPaused = false;
+        let arena = Array.from({length: 20}, () => Array(12).fill(0));
+        let player = { pos: {x: 0, y: 0}, matrix: null, next: null, score: 0 };
+        let moveInterval = null;
+
+        function createPiece(type) {
+            if (type === 'I') return [[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]];
+            if (type === 'O') return [[2,2],[2,2]];
+            if (type === 'T') return [[0,3,0],[3,3,3],[0,0,0]];
+            if (type === 'L') return [[0,4,0],[0,4,0],[0,4,4]];
+            if (type === 'S') return [[0,5,5],[5,5,0],[0,0,0]];
+            if (type === 'Z') return [[6,6,0],[0,6,6],[0,0,0]];
+            if (type === 'J') return [[0,7,0],[0,7,0],[7,7,0]];
+        }
+
+        function togglePause() {
+            if (!gameRunning) return;
+            isPaused = !isPaused;
+            document.getElementById('pause-screen').style.display = isPaused ? 'flex' : 'none';
+            if (!isPaused) { lastTime = performance.now(); update(); }
+            else { stopMoving(); }
+        }
+
+        function startMoving(dir) {
+            if (!gameRunning || isPaused || moveInterval) return;
+            moveOnce(dir);
+            moveInterval = setInterval(() => moveOnce(dir), 100);
+        }
+
+        function moveOnce(dir) {
+            if (dir === 'down') { playerDrop(); }
+            else {
+                player.pos.x += dir;
+                if (collide(arena, player)) { player.pos.x -= dir; }
+                else { sounds.move(); }
+            }
+        }
+
+        function stopMoving() {
+            clearInterval(moveInterval);
+            moveInterval = null;
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.keyCode === 27) togglePause();
+            if (isPaused) return;
+            if (e.repeat) return;
+            if (e.keyCode === 39) startMoving(-1);
+            if (e.keyCode === 37) startMoving(1);
+            if (e.keyCode === 40) startMoving('down');
+            if (e.keyCode === 38) { playerRotate(); sounds.rotate(); }
+        });
+
+        document.addEventListener('keyup', e => {
+            if ([37, 39, 40].includes(e.keyCode)) stopMoving();
+        });
+
+        const setupMobileBtn = (id, action) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); startMoving(action); });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); stopMoving(); });
+            btn.addEventListener('touchcancel', (e) => { e.preventDefault(); stopMoving(); });
+        };
+
+        setupMobileBtn('btn-right', -1);
+        setupMobileBtn('btn-left', 1);
+        setupMobileBtn('btn-down', 'down');
+        document.getElementById('btn-up').onclick = () => { if(!isPaused && gameRunning) { playerRotate(); sounds.rotate(); } };
+
+        function playerReset() {
+            const pieces = 'IOTSZLJ';
+            if (!player.next) player.next = createPiece(pieces[Math.random() * pieces.length | 0]);
+            player.matrix = player.next;
+            player.next = createPiece(pieces[Math.random() * pieces.length | 0]);
+            player.pos.y = 0; player.pos.x = 4;
+            if (collide(arena, player)) {
+                sounds.gameOver(); gameRunning = false;
+                document.getElementById('start-screen').style.display = 'flex';
+                document.getElementById('main-title').innerText = "انتهت اللعبة!";
+            }
+            drawNext();
+        }
+
+        function drawNext() {
+            nextCtx.fillStyle = '#000'; nextCtx.fillRect(0, 0, 50, 50);
+            player.next.forEach((row, y) => {
+                row.forEach((v, x) => {
+                    if (v !== 0) { nextCtx.fillStyle = varColor(v); nextCtx.fillRect(x*10 + 10, y*10 + 10, 8, 8); }
+                });
+            });
+        }
+
+        function startGame() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('pause-screen').style.display = 'none';
+            arena.forEach(row => row.fill(0));
+            player.score = 0; document.getElementById('score').innerText = "0";
+            isPaused = false; playerReset(); gameRunning = true;
+            lastTime = performance.now(); update();
+        }
+
+        function resetGame() { stopMoving(); startGame(); }
+
+        function playerDrop() {
+            if (isPaused) return;
+            player.pos.y++;
+            if (collide(arena, player)) {
+                player.pos.y--; merge(arena, player);
+                playerReset(); arenaSweep();
+            }
+            dropCounter = 0;
+        }
+
+        function collide(arena, player) {
+            const [m, o] = [player.matrix, player.pos];
+            for (let y = 0; y < m.length; ++y) {
+                for (let x = 0; x < m[y].length; ++x) {
+                    if (m[y][x] !== 0 && (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0) return true;
+                }
+            }
+            return false;
+        }
+
+        function merge(arena, player) {
+            player.matrix.forEach((row, y) => {
+                row.forEach((v, x) => { if (v !== 0) arena[y + player.pos.y][x + player.pos.x] = v; });
+            });
+        }
+
+        function arenaSweep() {
+            let cleared = 0;
+            for (let y = 19; y >= 0; --y) {
+                if (arena[y].every(v => v !== 0)) {
+                    arena.splice(y, 1); arena.unshift(new Array(12).fill(0));
+                    cleared++; y++;
+                }
+            }
+            if (cleared > 0) {
+                sounds.clear(); player.score += cleared * 100;
+                document.getElementById('score').innerText = player.score;
+            }
+        }
+
+        function playerRotate() {
+            if (isPaused) return;
+            const matrix = player.matrix;
+            for (let y = 0; y < matrix.length; ++y) {
+                for (let x = 0; x < y; ++x) [matrix[x][y], matrix[y][x]] = [matrix[y][x], matrix[x][y]];
+            }
+            matrix.forEach(row => row.reverse());
+            if (collide(arena, player)) matrix.forEach(row => row.reverse());
+        }
+
+        function draw() {
+            context.fillStyle = '#000'; context.fillRect(0, 0, canvas.width, canvas.height);
+            arena.forEach((row, y) => {
+                row.forEach((v, x) => {
+                    if (v !== 0) { context.fillStyle = varColor(v); context.fillRect(x*BLOCK, y*BLOCK, BLOCK-1, BLOCK-1); }
+                });
+            });
+            if (player.matrix) {
+                player.matrix.forEach((row, y) => {
+                    row.forEach((v, x) => {
+                        if (v !== 0) { context.fillStyle = varColor(v); context.fillRect((x + player.pos.x)*BLOCK, (y + player.pos.y)*BLOCK, BLOCK-1, BLOCK-1); }
+                    });
+                });
+            }
+        }
+
+        function varColor(v) {
+            const colors = [null, '#00f2fe', '#f093fb', '#33ff00', '#fbff00', '#ff9900', '#9d00ff', '#ff0000'];
+            return colors[v];
+        }
+
+        let dropCounter = 0; let lastTime = 0;
+        function update(time = 0) {
+            if (!gameRunning || isPaused) return;
+            const deltaTime = time - lastTime;
+            lastTime = time; dropCounter += deltaTime;
+            if (dropCounter > 800) playerDrop();
+            draw(); requestAnimationFrame(update);
+        }
+    </script>
+</body>
+</html>
+o
